@@ -1,6 +1,6 @@
 # LangChain Tool Agent
 
-A small Python LangChain agent that can call local tools for arithmetic, current time, live weather, sports data, text statistics, and SQL query generation. The CLI keeps short-term memory for the last 20 user/agent messages in the current session.
+A small Python LangChain agent that can call local tools for arithmetic, current time, live weather, sports data, text statistics, and SQL query generation. The app keeps separate short-term memory for each query type, with up to 20 user/agent messages per type in the current session.
 
 ## Setup
 
@@ -45,6 +45,8 @@ Count the words in: LangChain agents can use tools.
 Create a SQL query for: show each customer's total order amount using customers(id, name) and orders(customer_id, amount)
 My favorite city is Lahore.
 What is the weather there?
+My name is Ali.
+What is my name?
 ```
 
 ## How the Agent Works

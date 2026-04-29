@@ -7,8 +7,8 @@ from typing import Any
 from flask import Flask, jsonify, render_template_string, request, session
 
 from app.agent import build_agent
-from app.cli import MAX_MEMORY_MESSAGES
 from app.guardrails import apply_guardrails
+from app.memory import classify_query_type, relevant_memory, remember_exchange, sanitize_memory
 
 
 HTML = """
@@ -81,7 +81,35 @@ HTML = """
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .guide {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
       margin-bottom: 14px;
+    }
+
+    .query-type {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .query-type h2 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .query-type p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
     }
 
     .example {
@@ -100,8 +128,8 @@ HTML = """
     }
 
     .messages {
-      height: calc(100vh - 230px);
-      min-height: 340px;
+      height: calc(100vh - 420px);
+      min-height: 280px;
       overflow-y: auto;
       border: 1px solid var(--line);
       background: #edf2f8;
@@ -186,7 +214,11 @@ HTML = """
       }
 
       .messages {
-        height: calc(100vh - 280px);
+        height: 360px;
+      }
+
+      .guide {
+        grid-template-columns: 1fr;
       }
 
       form {
@@ -203,7 +235,7 @@ HTML = """
   <div class="shell">
     <header>
       <h1>LangChain Tool Agent</h1>
-      <div class="subhead">Short-term memory keeps the last 20 messages in this browser session.</div>
+      <div class="subhead">Each query type keeps its own last 20 messages in this browser session.</div>
     </header>
 
     <main>
@@ -213,6 +245,32 @@ HTML = """
         <button class="example" type="button">Create a SQL query for total orders by customer using customers(id, name) and orders(customer_id, amount)</button>
         <button class="example" type="button">My favorite city is Lahore.</button>
       </div>
+      <section class="guide" aria-label="Supported query types">
+        <article class="query-type">
+          <h2>Weather</h2>
+          <p>Ask for current weather, temperature, humidity, wind, or conditions in a city.</p>
+        </article>
+        <article class="query-type">
+          <h2>Sports</h2>
+          <p>Search teams by name, then ask for upcoming or recent events using the team ID.</p>
+        </article>
+        <article class="query-type">
+          <h2>SQL Builder</h2>
+          <p>Describe the report you want and include table names or columns for better SQL.</p>
+        </article>
+        <article class="query-type">
+          <h2>Calculator</h2>
+          <p>Use arithmetic expressions such as totals, percentages, multiplication, and brackets.</p>
+        </article>
+        <article class="query-type">
+          <h2>Text Stats</h2>
+          <p>Ask for character, word, and line counts for any pasted text.</p>
+        </article>
+        <article class="query-type">
+          <h2>Memory</h2>
+          <p>Share a detail, then refer to it later inside the same query type.</p>
+        </article>
+      </section>
       <div id="messages" class="messages" aria-live="polite"></div>
     </main>
 
@@ -307,22 +365,18 @@ def create_app() -> Flask:
         if not allowed:
             return jsonify({"reply": payload}), 400
 
-        memory = _get_memory()
+        memory = _get_memory_by_type()
+        query_type = classify_query_type(payload)
+        history = relevant_memory(memory, query_type)
         user_message = {"role": "user", "content": payload}
 
         with agent_lock:
-            response = agent.invoke({"messages": [*memory, user_message]})
+            response = agent.invoke({"messages": [*history, user_message]})
 
         final_message = response["messages"][-1]
         reply = str(final_message.content)
 
-        memory.extend(
-            [
-                user_message,
-                {"role": "assistant", "content": reply},
-            ]
-        )
-        session["memory"] = memory[-MAX_MEMORY_MESSAGES:]
+        session["memory_by_type"] = remember_exchange(memory, query_type, payload, reply)
         session.modified = True
 
         return jsonify({"reply": reply})
@@ -330,22 +384,8 @@ def create_app() -> Flask:
     return app
 
 
-def _get_memory() -> list[dict[str, Any]]:
-    memory = session.get("memory", [])
-    if not isinstance(memory, list):
-        return []
-
-    valid_messages: list[dict[str, Any]] = []
-    for message in memory:
-        if not isinstance(message, dict):
-            continue
-
-        role = message.get("role")
-        content = message.get("content")
-        if role in {"user", "assistant"} and isinstance(content, str):
-            valid_messages.append({"role": role, "content": content})
-
-    return valid_messages[-MAX_MEMORY_MESSAGES:]
+def _get_memory_by_type() -> dict[str, list[dict[str, Any]]]:
+    return sanitize_memory(session.get("memory_by_type", {}))
 
 
 app = create_app()
